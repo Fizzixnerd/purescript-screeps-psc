@@ -1,0 +1,3 @@
+[submodule "purescript-screeps"]
+	path = purescript-screeps
+	url = ./lib/purescript-screeps/
