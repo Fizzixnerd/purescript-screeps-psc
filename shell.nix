@@ -12,13 +12,15 @@ let
 in
 pkgs.mkShell {
   buildInputs = [
-    easy-ps.purs
-    pkgs.nodePackages.bower
-    pkgs.nodejs
-    easy-ps.pulp
-    easy-ps.psc-package
-    easy-ps.purescript-language-server
-    easy-ps.psa
-    easy-ps.spago
+        pkgs.nodePackages.bower
+        pkgs.nodejs
+        pkgs.notify-desktop
+
+        easy-ps.purs
+        easy-ps.pulp
+        easy-ps.psc-package
+        easy-ps.purescript-language-server
+        easy-ps.psa
+        easy-ps.spago
   ];
 }

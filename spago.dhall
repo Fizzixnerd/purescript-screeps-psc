@@ -12,10 +12,16 @@ to generate this file without the comments in this block.
 -}
 { name = "screeps-psc"
 , dependencies =
-  [ "console"
+  [ "argonaut-codecs"
+  , "arrays"
+  , "bifunctors"
+  , "console"
   , "effect"
+  , "either"
   , "foldable-traversable"
   , "foreign-object"
+  , "lists"
+  , "maybe"
   , "prelude"
   , "psci-support"
   , "screeps"

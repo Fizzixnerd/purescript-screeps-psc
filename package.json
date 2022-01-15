@@ -1,7 +1,7 @@
 {
     "scripts": {
-        "deploy": "cp output/screepsMain.js ~/.config/Screeps/scripts/127_0_0_1___21025/default/main.js",
-        "watch:deploy": "pulp --watch --then \"npm run wrapMain && npm run deploy\" build --to output/main.js",
-        "wrapMain": "echo 'module.exports.loop = function(){' > output/screepsMain.js && cat output/main.js >> output/screepsMain.js && echo '}' >> output/screepsMain.js"
+        "deploy": "cp output/screepsMain.js ~/.config/Screeps/scripts/screeps.com/tutorial-3/main.js",
+        "watch:deploy": "spago bundle-app --watch --then \"npm run wrapMain && npm run deploy\"",
+        "wrapMain": "sed index.js -e 's/PS\\[\"Main\"\\].main();/module.exports.loop = function() { PS\\[\"Main\"\\].main(); };/' > output/screepsMain.js"
     }
 }
