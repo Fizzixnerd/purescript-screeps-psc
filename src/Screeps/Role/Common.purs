@@ -2,18 +2,23 @@ module Screeps.Role.Common where
 
 import Prelude
 
-import Data.Argonaut.Decode (class DecodeJson, JsonDecodeError)
-import Data.Argonaut.Encode (class EncodeJson)
+import Data.Argonaut.Core (Json(..), fromString, toString)
+import Data.Argonaut.Decode (class DecodeJson, JsonDecodeError(..), decodeJson)
+import Data.Argonaut.Decode.Decoders (decodeString)
+import Data.Argonaut.Encode (class EncodeJson, encodeJson)
+import Data.Argonaut.Encode.Encoders (encodeString)
 import Data.Array (head)
 import Data.Bifunctor (lmap)
 import Data.Either (Either(..))
+import Data.Eq.Generic (genericEq)
 import Data.Generic.Rep (class Generic)
 import Data.List (find)
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), maybe)
 import Data.Show.Generic (genericShow)
 import Effect (Effect)
+import Effect.Console (logShow)
 import Screeps (BodyPartType, Creep, ReturnCode, RoomObject, Spawn, TargetPosition(..), err_busy, err_not_enough_energy, err_not_in_range, find_sources, ok, resource_energy)
-import Screeps.Creep (amtCarrying, freeCapacity, getMemory, harvestSource, moveTo, name, transferAmtToStructure, transferToStructure)
+import Screeps.Creep (amtCarrying, freeCapacity, getMemoryBy, harvestSource, moveTo, name, transferAmtToStructure, transferToStructure)
 import Screeps.Monad (ScreepsM, ScreepsM')
 import Screeps.Room (find')
 import Screeps.RoomObject (room)
@@ -29,15 +34,38 @@ checkOkM :: forall m. Applicative m => ReturnCode -> ScreepsM' m CommonError Uni
 checkOkM rc | rc == ok = okM unit
             | otherwise = throwM (OtherErr rc)
 
+data Role =
+  Harvester
+  | Upgrader
+  | Builder
+derive instance genericRole :: Generic Role _
+instance eqRole :: Eq Role where eq = genericEq
+instance showRole :: Show Role where show = genericShow
+
+instance roleEncodeJson :: EncodeJson Role where
+  encodeJson Harvester = fromString "\"harvester\""
+  encodeJson Upgrader = fromString "\"upgrader\""
+  encodeJson Builder = fromString "\"builder\"" 
+
+instance roleDecodeJson :: DecodeJson Role where
+  decodeJson r = maybe (Left (TypeMismatch "Role")) pure $
+                 (case _ of
+                     "harvester" -> pure Harvester
+                     "upgrader" -> pure Upgrader
+                     "builder" -> pure Builder
+                     _ -> Nothing)
+                 =<< toString r
+
 data CommonError =
   TargetDoesNotExistErr
   | CreepWithNameExistsErr String
   | NotEnoughEnergyToSpawnCreepErr
   | SpawnBusyErr
   | SpawnEnergyFullErr
-  | OtherErr ReturnCode
   | ShouldNotSpawnErr String
-  | CreepRoleErr String
+  | CreepRoleErr Role
+  | JsonError JsonDecodeError
+  | OtherErr ReturnCode
 derive instance genericCommonError :: Generic CommonError _
 instance showCommonError :: Show CommonError where show = genericShow
 
@@ -56,22 +84,22 @@ mkSpawn parts condition opts = \desiredName spawner creeps -> do
              | otherwise -> checkOkM rc
     else throwM $ ShouldNotSpawnErr desiredName
 
-mkRun :: forall err a. (DecodeJson a) => (CommonError -> err) -> (a -> String) -> String -> (Creep -> ScreepsM err Unit) -> Creep -> ScreepsM err Unit
-mkRun fromCommonErr getRole role runner = \creep -> do
-  isOk <- hasRole creep getRole role
-  case isOk of
-    Left _ -> okM unit
+mkRun :: forall err. (CommonError -> err) -> Role -> (Creep -> ScreepsM err Unit) -> Creep -> ScreepsM err Unit
+mkRun fromCommonErr role runner = \creep -> do
+  creepHasAppropriateRole <- creep `hasRole` role
+  case creepHasAppropriateRole of
+    Left err -> throwM $ fromCommonErr $ JsonError err
     Right false -> throwM $ fromCommonErr $ CreepRoleErr role
     Right true -> runner creep
 
-hasRole :: forall a. (DecodeJson a) => Creep -> (a -> String) -> String -> ScreepsM JsonDecodeError Boolean
-hasRole creep getRole roleName = do
-  role <- getMemory creep
+hasRole :: Creep -> Role -> ScreepsM JsonDecodeError Boolean
+hasRole creep roleName = do
+  (role :: Either _ Role) <- getMemoryBy "role" creep
   case role of
     Left jsonErr -> throwM jsonErr
-    Right mem -> okM (getRole mem == roleName)
+    Right r -> okM (r == roleName)
 
-gatherEnergyThen :: forall err. (CommonError -> err) -> (Creep -> ScreepsM err Boolean) -> (Creep -> ScreepsM err Unit) -> (Creep -> ScreepsM err Unit)
+gatherEnergyThen :: forall err. (CommonError -> err) -> (Creep -> ScreepsM err Boolean) -> (Creep -> ScreepsM err Unit) -> Creep -> ScreepsM err Unit
 gatherEnergyThen fromCommonError shouldGather actionAfterGather = \creep -> do
   creepShouldGather <- shouldGather creep
   case creepShouldGather of

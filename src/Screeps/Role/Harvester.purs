@@ -9,7 +9,7 @@ import Data.Show.Generic (genericShow)
 import Screeps (Creep, Spawn, part_carry, part_move, part_work)
 import Screeps.Creep (freeCapacity)
 import Screeps.Monad (ScreepsM)
-import Screeps.Role.Common (CommonError, gatherEnergyThen, mkRun, mkSpawn, okM, returnEnergyToBase)
+import Screeps.Role.Common (CommonError, gatherEnergyThen, mkRun, mkSpawn, okM, returnEnergyToBase, Role(..))
 import Screeps.Spawn (SpawnOptions, spawnOpts)
 import Screeps.Types (BodyPartType)
 
@@ -18,26 +18,23 @@ data HarvesterError =
 derive instance genericHarvesterError :: Generic HarvesterError _
 instance showHarvesterError :: Show HarvesterError where show = genericShow
 
-type HarvesterMemory =
-  { role :: String }
-
-getRole :: HarvesterMemory -> String
-getRole m = m.role
+type HarvesterMemory e =
+  { role :: Role | e }
 
 parts :: Array BodyPartType
 parts = [part_carry, part_move, part_work]
 
-role :: String
-role = "harvester"
+role :: Role
+role = Harvester
 
-memory :: HarvesterMemory
+memory :: HarvesterMemory ()
 memory = { role: role }
 
-opts :: SpawnOptions HarvesterMemory
+opts :: SpawnOptions (HarvesterMemory ())
 opts = spawnOpts { memory = Just memory }
 
 spawn :: String -> Spawn -> Array Creep -> ScreepsM HarvesterError Unit
 spawn name spawner creeps = lmap HarvesterCommonErr <$> mkSpawn parts (pure true) opts name spawner creeps
 
 run :: Spawn -> Creep -> ScreepsM HarvesterError Unit
-run spawner = mkRun HarvesterCommonErr getRole role (gatherEnergyThen HarvesterCommonErr (\c -> okM $ freeCapacity c > 0) (returnEnergyToBase HarvesterCommonErr spawner))
+run spawner = mkRun HarvesterCommonErr role (gatherEnergyThen HarvesterCommonErr (\c -> okM $ freeCapacity c > 0) (returnEnergyToBase HarvesterCommonErr spawner))

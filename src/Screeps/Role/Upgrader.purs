@@ -12,7 +12,7 @@ import Screeps.Constants (resource_energy)
 import Screeps.Controller (level, ticksToDowngrade)
 import Screeps.Creep (amtCarrying, freeCapacity, upgradeController)
 import Screeps.Monad (ScreepsM)
-import Screeps.Role.Common (CommonError, gatherEnergyThen, maxLevel, mkRun, mkSpawn, moveToFirstThen, okM, returnEnergyToBase, throwM)
+import Screeps.Role.Common (CommonError, gatherEnergyThen, maxLevel, mkRun, mkSpawn, moveToFirstThen, okM, returnEnergyToBase, throwM, Role(..))
 import Screeps.Room (controller)
 import Screeps.RoomObject (pos, room)
 import Screeps.RoomPosition (inRangeTo, isNearTo)
@@ -30,22 +30,19 @@ data UpgraderError =
 derive instance genericUpgraderError :: Generic UpgraderError _
 instance showUpgraderError :: Show UpgraderError where show = genericShow
 
-type UpgraderMemory =
-  { role :: String }
-
-getRole :: UpgraderMemory -> String
-getRole m = m.role
+type UpgraderMemory e =
+  { role :: Role | e }
 
 parts :: Array BodyPartType
 parts = [part_carry, part_move, part_work]
 
-role :: String
-role = "upgrader"
+role :: Role
+role = Upgrader
 
-memory :: UpgraderMemory
+memory :: UpgraderMemory ()
 memory = { role: role }
 
-opts :: SpawnOptions UpgraderMemory
+opts :: SpawnOptions (UpgraderMemory ())
 opts = spawnOpts { memory = Just memory }
 
 spawn :: String -> Spawn -> Array Creep -> ScreepsM UpgraderError Unit
@@ -63,7 +60,6 @@ range = 4
 run :: Spawn -> Creep -> ScreepsM UpgraderError Unit
 run spawner creep =
   mkRun UpgraderCommonErr
-        getRole
         role
         (gatherEnergyThen UpgraderCommonErr
                           shouldGather
