@@ -9,9 +9,10 @@ import Data.Show.Generic (genericShow)
 import Screeps (Creep, Spawn, part_carry, part_move, part_work)
 import Screeps.Creep (freeCapacity)
 import Screeps.Monad (ScreepsM)
-import Screeps.Role.Common (CommonError, gatherEnergyThen, mkRun, mkSpawn, okM, returnEnergyToBase, Role(..))
+import Screeps.Role.Common (CommonError, Role(..), gatherEnergyThen, mkCount, mkRun, mkSpawn, returnEnergyToBase)
 import Screeps.Spawn (SpawnOptions, spawnOpts)
 import Screeps.Types (BodyPartType)
+import Effect (Effect)
 
 data HarvesterError =
   HarvesterCommonErr CommonError
@@ -33,8 +34,11 @@ memory = { role: role }
 opts :: SpawnOptions (HarvesterMemory ())
 opts = spawnOpts { memory = Just memory }
 
+count :: Effect Int
+count = mkCount role
+
 spawn :: String -> Spawn -> Array Creep -> ScreepsM HarvesterError Unit
-spawn name spawner creeps = lmap HarvesterCommonErr <$> mkSpawn parts (pure true) opts name spawner creeps
+spawn name spawner creeps = lmap HarvesterCommonErr <$> mkSpawn parts ((_ <= 10) <$> count) opts name spawner creeps
 
 run :: Spawn -> Creep -> ScreepsM HarvesterError Unit
-run spawner = mkRun HarvesterCommonErr role (gatherEnergyThen HarvesterCommonErr (\c -> okM $ freeCapacity c > 0) (returnEnergyToBase HarvesterCommonErr spawner))
+run spawner = mkRun HarvesterCommonErr role (\crp -> lmap HarvesterCommonErr <$> (gatherEnergyThen (\c -> pure $ freeCapacity c > 0) (returnEnergyToBase spawner) crp))

@@ -9,17 +9,19 @@ import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
 import Data.Traversable (traverse)
 import Effect (Effect)
-import Effect.Console (logShow, log)
+import Effect.Console (log)
 import Foreign.Object (values, lookup)
 import Screeps.Game (getGameGlobal, creeps, spawns)
 import Screeps.Memory (get, getMemoryGlobal, set)
 import Screeps.Role.Harvester as H
 import Screeps.Role.Upgrader as U
+import Screeps.Role.Builder as B
 import Screeps.Role.Common (CommonError(..))
 
 data ScreepsError =
   HarvesterErr H.HarvesterError
   | UpgraderErr U.UpgraderError
+  | BuilderErr B.BuilderError
 derive instance genericScreepsError :: Generic ScreepsError _
 instance showScreepsError :: Show ScreepsError where show = genericShow
 
@@ -36,22 +38,26 @@ main = do
     Nothing -> log "Can't find Spawn1"
     Just s1 -> do
       n <- get memory creep_counter
-      spawnHarvesterResult <- H.spawn (H.role <> "0") s1 (values myCreeps)
+      spawnHarvesterResult <- H.spawn (show H.role <> (either (const "0") show n)) s1 (values myCreeps)
       case spawnHarvesterResult of
         Left (H.HarvesterCommonErr (CreepWithNameExistsErr _)) -> incrCreepCounter memory n
         Right _ -> incrCreepCounter memory n
         Left _ -> pure unit
-      harvesterResults <- map (lmap HarvesterErr) <$> traverse (H.run s1) (values myCreeps)
+      void $ map (lmap HarvesterErr) <$> traverse (H.run s1) (values myCreeps)
       n' <- get memory creep_counter
-      spawnUpgraderResult <- U.spawn (U.role <> (either (const "0") show n')) s1 (values myCreeps)
+      spawnUpgraderResult <- U.spawn (show U.role <> (either (const "0") show n')) s1 (values myCreeps)
       case spawnUpgraderResult of
         Left (U.UpgraderCommonErr (CreepWithNameExistsErr _)) -> incrCreepCounter memory n'
         Right _ -> incrCreepCounter memory n'
         Left _ -> pure unit
-      upgraderResults <- map (lmap UpgraderErr) <$> traverse (U.run s1) (values myCreeps)
-      logShow spawnHarvesterResult
-      logShow harvesterResults
-      logShow spawnUpgraderResult
-      logShow upgraderResults
+      n'' <- get memory creep_counter
+      void $ map (lmap UpgraderErr) <$> traverse (U.run s1) (values myCreeps)
+      spawnBuilderResult <- B.spawn (show B.role <> (either (const "0") show n'')) s1 (values myCreeps)
+      case spawnBuilderResult of
+        Left (B.BuilderCommonErr (CreepWithNameExistsErr _)) -> incrCreepCounter memory n''
+        Right _ -> incrCreepCounter memory n''
+        Left _ -> pure unit
+      void $ map (lmap BuilderErr) <$> traverse B.run (values myCreeps)
+      log "tick"
   where
     incrCreepCounter mem n = set mem creep_counter (either (const 0) (_ + 1) n)

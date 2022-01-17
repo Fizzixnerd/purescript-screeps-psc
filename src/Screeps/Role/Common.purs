@@ -2,12 +2,10 @@ module Screeps.Role.Common where
 
 import Prelude
 
-import Data.Argonaut.Core (Json(..), fromString, toString)
-import Data.Argonaut.Decode (class DecodeJson, JsonDecodeError(..), decodeJson)
-import Data.Argonaut.Decode.Decoders (decodeString)
-import Data.Argonaut.Encode (class EncodeJson, encodeJson)
-import Data.Argonaut.Encode.Encoders (encodeString)
-import Data.Array (head)
+import Data.Argonaut.Core (fromString, toString)
+import Data.Argonaut.Decode (class DecodeJson, JsonDecodeError(..))
+import Data.Argonaut.Encode (class EncodeJson)
+import Data.Array (foldM)
 import Data.Bifunctor (lmap)
 import Data.Either (Either(..))
 import Data.Eq.Generic (genericEq)
@@ -15,14 +13,19 @@ import Data.Generic.Rep (class Generic)
 import Data.List (find)
 import Data.Maybe (Maybe(..), maybe)
 import Data.Show.Generic (genericShow)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Console (logShow)
-import Screeps (BodyPartType, Creep, ReturnCode, RoomObject, Spawn, TargetPosition(..), err_busy, err_not_enough_energy, err_not_in_range, find_sources, ok, resource_energy)
-import Screeps.Creep (amtCarrying, freeCapacity, getMemoryBy, harvestSource, moveTo, name, transferAmtToStructure, transferToStructure)
+import Effect.Exception (Error)
+import Foreign.Object (values)
+import Screeps (BodyPartType, Creep, ReturnCode, RoomObject, Spawn, TargetPosition(..), ConstructionSite, err_busy, err_not_enough_energy, err_not_in_range, find_sources, ok, resource_energy)
+import Screeps.Creep (amtCarrying, build, getMemoryBy, harvestSource, moveTo, name, transferAmtToStructure)
+import Screeps.Game (creeps, getGameGlobal)
 import Screeps.Monad (ScreepsM, ScreepsM')
 import Screeps.Room (find')
-import Screeps.RoomObject (room)
+import Screeps.RoomObject (pos, room)
+import Screeps.RoomPosition (closestPathOpts, findClosestByPath, inRangeTo)
 import Screeps.Spawn (energy, energyCapacity, spawnCreep', SpawnOptions)
+import Screeps.Types (FindContext(..))
 
 throwM :: forall m err a. Applicative m => err -> ScreepsM' m err a
 throwM = pure <<< Left
@@ -45,7 +48,7 @@ instance showRole :: Show Role where show = genericShow
 instance roleEncodeJson :: EncodeJson Role where
   encodeJson Harvester = fromString "\"harvester\""
   encodeJson Upgrader = fromString "\"upgrader\""
-  encodeJson Builder = fromString "\"builder\"" 
+  encodeJson Builder = fromString "\"builder\""
 
 instance roleDecodeJson :: DecodeJson Role where
   decodeJson r = maybe (Left (TypeMismatch "Role")) pure $
@@ -65,6 +68,7 @@ data CommonError =
   | ShouldNotSpawnErr String
   | CreepRoleErr Role
   | JsonError JsonDecodeError
+  | PathFindingError Error
   | OtherErr ReturnCode
 derive instance genericCommonError :: Generic CommonError _
 instance showCommonError :: Show CommonError where show = genericShow
@@ -99,34 +103,66 @@ hasRole creep roleName = do
     Left jsonErr -> throwM jsonErr
     Right r -> okM (r == roleName)
 
-gatherEnergyThen :: forall err. (CommonError -> err) -> (Creep -> ScreepsM err Boolean) -> (Creep -> ScreepsM err Unit) -> Creep -> ScreepsM err Unit
-gatherEnergyThen fromCommonError shouldGather actionAfterGather = \creep -> do
+mkCount :: Role -> Effect Int
+mkCount role = do
+  creeps <- values <<< creeps <$> getGameGlobal
+  foldM (\acc c -> do
+            isRoleE <- c `hasRole` role
+            case isRoleE of
+              Left _ -> pure acc
+              Right false -> pure acc
+              Right true -> pure (acc + 1))
+        0
+        creeps
+
+gatherEnergyThen :: (Creep -> Effect Boolean) -> (Creep -> ScreepsM CommonError Unit) -> Creep -> ScreepsM CommonError Unit
+gatherEnergyThen shouldGather actionAfterGather = \creep -> do
   creepShouldGather <- shouldGather creep
-  case creepShouldGather of
-    Right true -> do
-      let sources = find' (room creep) find_sources (const true)
-      lmap fromCommonError <$> moveToFirstThen harvestSource creep sources
-    Right false -> actionAfterGather creep
-    Left _ -> actionAfterGather creep
+  if creepShouldGather
+    then
+      let closestSrc = findClosestByPath (pos creep) (OfType find_sources) in
+      case closestSrc of
+        Left err -> throwM $ PathFindingError err
+        Right Nothing -> throwM TargetDoesNotExistErr
+        Right (Just src) -> moveToThen harvestSource src creep
+    else actionAfterGather creep
+
+moveToThen :: forall a. (Creep -> RoomObject a -> Effect ReturnCode) -> RoomObject a -> Creep -> ScreepsM CommonError Unit
+moveToThen actionAfterMove = \target creep -> do
+  returnCode <- actionAfterMove creep target
+  case returnCode of
+    _ | returnCode == err_not_in_range -> moveTo creep (TargetObj target) >>= checkOkM
+      | otherwise -> checkOkM returnCode
+
+moveToBestThen :: forall a. (Creep -> RoomObject a -> Effect Int) -> (Creep -> RoomObject a -> Effect ReturnCode) -> Creep -> Array (RoomObject a) -> ScreepsM CommonError Unit
+moveToBestThen judgeGoodness actionAfterMove = \creep targets -> do
+  best <- foldM (\acc x -> do
+                    goodness <- judgeGoodness creep x
+                    case acc of
+                      Just (Tuple goodnessAcc _) -> if goodness > goodnessAcc then pure (Just (Tuple goodness x)) else pure acc
+                      Nothing -> pure (Just (Tuple goodness x)))
+                Nothing
+                targets
+  case best of
+    Nothing -> throwM TargetDoesNotExistErr
+    Just (Tuple _ target) -> moveToThen actionAfterMove target creep
 
 moveToFirstThen :: forall a. (Creep -> RoomObject a -> Effect ReturnCode) -> Creep -> Array (RoomObject a) -> ScreepsM CommonError Unit
-moveToFirstThen actionAfterMove = \creep targets -> do
-  let first = head targets
-  case first of
-    Nothing -> throwM TargetDoesNotExistErr
-    Just target -> do
-      returnCode <- actionAfterMove creep target
-      case returnCode of
-        rc | rc == err_not_in_range -> moveTo creep (TargetObj target) >>= checkOkM
-           | otherwise -> checkOkM rc
+moveToFirstThen = moveToBestThen (\_ _ -> pure 0)
 
-returnEnergyToBase :: forall err. (CommonError -> err) -> Spawn -> Creep -> ScreepsM err Unit
-returnEnergyToBase fromCommonError spawner creep =
+returnEnergyToBase :: Spawn -> Creep -> ScreepsM CommonError Unit
+returnEnergyToBase spawner creep =
   if energy spawner < energyCapacity spawner
   then do
     let amt = amtCarrying creep resource_energy
-    lmap fromCommonError <$> moveToFirstThen (\c s -> transferAmtToStructure c s resource_energy amt) creep [spawner] 
-  else throwM $ fromCommonError SpawnEnergyFullErr
+    moveToThen (\c s -> transferAmtToStructure c s resource_energy amt) spawner creep
+  else throwM SpawnEnergyFullErr
+
+buildConstructionSite :: ConstructionSite -> Creep -> ScreepsM CommonError Unit
+buildConstructionSite = moveToThen build
 
 maxLevel :: Int
 maxLevel = 8
+
+isNear :: forall a b. RoomObject a -> Maybe (RoomObject b) -> Int -> Boolean
+isNear x my range = maybe false (\y -> inRangeTo (pos x) (TargetObj y) range) my

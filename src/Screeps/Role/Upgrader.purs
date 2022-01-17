@@ -12,10 +12,10 @@ import Screeps.Constants (resource_energy)
 import Screeps.Controller (level, ticksToDowngrade)
 import Screeps.Creep (amtCarrying, freeCapacity, upgradeController)
 import Screeps.Monad (ScreepsM)
-import Screeps.Role.Common (CommonError, gatherEnergyThen, maxLevel, mkRun, mkSpawn, moveToFirstThen, okM, returnEnergyToBase, throwM, Role(..))
+import Screeps.Role.Common (CommonError(..), Role(..), gatherEnergyThen, isNear, maxLevel, mkCount, mkRun, mkSpawn, moveToThen, returnEnergyToBase, throwM)
 import Screeps.Room (controller)
 import Screeps.RoomObject (pos, room)
-import Screeps.RoomPosition (inRangeTo, isNearTo)
+import Screeps.RoomPosition (inRangeTo)
 import Screeps.Spawn (SpawnOptions, spawnOpts)
 import Screeps.Types (BodyPartType, TargetPosition(..))
 
@@ -25,7 +25,6 @@ data UpgraderError =
   | SpawnBusyErr
   | SpawnEnergyFullErr
   | UpgraderCommonErr CommonError
-  | NoControllerErr
 
 derive instance genericUpgraderError :: Generic UpgraderError _
 instance showUpgraderError :: Show UpgraderError where show = genericShow
@@ -39,6 +38,9 @@ parts = [part_carry, part_move, part_work]
 role :: Role
 role = Upgrader
 
+count :: Effect Int
+count = mkCount role
+
 memory :: UpgraderMemory ()
 memory = { role: role }
 
@@ -46,13 +48,13 @@ opts :: SpawnOptions (UpgraderMemory ())
 opts = spawnOpts { memory = Just memory }
 
 spawn :: String -> Spawn -> Array Creep -> ScreepsM UpgraderError Unit
-spawn name spawner creeps = lmap UpgraderCommonErr <$> mkSpawn parts (pure true) opts name spawner creeps
+spawn name spawner creeps = lmap UpgraderCommonErr <$> mkSpawn parts ((_ <= 5) <$> count) opts name spawner creeps
 
-upgradeRoomController :: Int -> Spawn -> Controller -> Creep -> ScreepsM UpgraderError Unit
+upgradeRoomController :: Int -> Spawn -> Controller -> Creep -> ScreepsM CommonError Unit
 upgradeRoomController threshold spawner roomController = \creep ->
   if level roomController < maxLevel || ticksToDowngrade roomController < threshold
-  then lmap UpgraderCommonErr <$> moveToFirstThen upgradeController creep [roomController]
-  else returnEnergyToBase UpgraderCommonErr spawner creep
+  then moveToThen upgradeController roomController creep
+  else returnEnergyToBase spawner creep
 
 range :: Int
 range = 4
@@ -61,16 +63,14 @@ run :: Spawn -> Creep -> ScreepsM UpgraderError Unit
 run spawner creep =
   mkRun UpgraderCommonErr
         role
-        (gatherEnergyThen UpgraderCommonErr
-                          shouldGather
-                          (maybe (\_ -> throwM NoControllerErr)
-                                 (upgradeRoomController 1000 spawner)
-                                 cont))
+        (\crp -> lmap UpgraderCommonErr <$>
+                 gatherEnergyThen shouldGather
+                                  (maybe (\_ -> throwM TargetDoesNotExistErr)
+                                         (upgradeRoomController 1000 spawner)
+                                         cont)
+                                  crp)
         creep
   where
     cont = controller $ room creep
-    shouldGather :: forall err. Creep -> ScreepsM err Boolean
-    shouldGather cr = okM $ not isNearController && hasCapacity cr || amtCarrying cr resource_energy == 0
-      where
-        isNearController = maybe false (\co -> inRangeTo (pos cr) (TargetObj co) range) cont
-        hasCapacity cre = maybe false (const $ freeCapacity cre > 0) cont
+    shouldGather :: Creep -> Effect Boolean
+    shouldGather crp = pure $ not (isNear crp cont range) && freeCapacity crp > 0 || amtCarrying crp resource_energy == 0

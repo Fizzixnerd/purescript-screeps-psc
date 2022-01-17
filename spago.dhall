@@ -13,18 +13,22 @@ to generate this file without the comments in this block.
 { name = "screeps-psc"
 , dependencies =
   [ "argonaut-codecs"
+  , "argonaut-core"
   , "arrays"
   , "bifunctors"
   , "console"
   , "effect"
   , "either"
+  , "exceptions"
   , "foldable-traversable"
   , "foreign-object"
   , "lists"
   , "maybe"
+  , "partial"
   , "prelude"
   , "psci-support"
   , "screeps"
+  , "tuples"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
